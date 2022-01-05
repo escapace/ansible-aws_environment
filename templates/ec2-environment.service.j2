@@ -1,0 +1,15 @@
+[Unit]
+Description=AWS EC2 Environment
+After=systemd-networkd-wait-online.service
+Wants=systemd-networkd-wait-online.service
+After=systemd-networkd.service
+Wants=systemd-networkd.service
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=retry 10 /usr/bin/ec2-environment
+RemainAfterExit=no
+
+[Install]
+WantedBy=network-online.target

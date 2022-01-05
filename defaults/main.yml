@@ -1,0 +1,4 @@
+---
+# defaults file for escapace.aws_ec2_environment
+
+aws_ec2_environment_rpm_retry: "https://github.com/escapace/rpmbuild/releases/download/v1.7.1/retry-1-1.noarch.rpm"

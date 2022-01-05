@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly EC2_INSTANCE_METADATA_URL="http://169.254.169.254/latest/meta-data"
+readonly EC2_INSTANCE_DYNAMIC_DATA_URL="http://169.254.169.254/latest/dynamic"
+
+declare -A EC2_ENVIRONMENT
+
+function log {
+  local -r level="$1"
+  local -r message="$2"
+  local -r timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+  echo >&2 -e "${timestamp} [${level}] [$SCRIPT_NAME] ${message}"
+}
+
+function log_error {
+  local -r message="$1"
+  log "ERROR" "$message"
+}
+
+function log_info {
+  local -r message="$1"
+  log "INFO" "$message"
+}
+
+function lookup_path_in_instance_metadata {
+  local -r path="$1"
+  curl -f --silent --show-error --location "$EC2_INSTANCE_METADATA_URL/$path/"
+}
+
+function lookup_path_in_instance_dynamic_data {
+  local -r path="$1"
+  curl -f --silent --location "$EC2_INSTANCE_DYNAMIC_DATA_URL/$path/"
+}
+
+function get_instance_id {
+  lookup_path_in_instance_metadata "instance-id"
+}
+
+function get_instance_type {
+  lookup_path_in_instance_metadata "instance-type"
+}
+
+function get_instance_availability_zone {
+  lookup_path_in_instance_metadata "placement/availability-zone"
+}
+
+function get_instance_region {
+  lookup_path_in_instance_dynamic_data "instance-identity/document" | jq -r ".region"
+}
+
+function interface_mac {
+  local -r interface="$1"
+  local mac
+
+  mac="$(cat /sys/class/net/"${interface}"/address)"
+
+  echo "${mac}"
+}
+
+# function assert_is_type {
+#   local -r type="$1"
+#
+#   if [[ "${type}" == "ipv4" || "${type}" == "ipv6" ]]
+#   then
+#       return 0
+#   else
+#       log_error "${type}: not ipv4 or ipv6"
+#
+#       exit 1
+#   fi
+# }
+
+function assert_is_interface {
+  local -r interface="$1"
+
+  if [[ -f "/sys/class/net/${interface}/address" ]]; then
+    return 0
+  else
+    log_error "${interface}: not an interface"
+
+    exit 1
+  fi
+}
+
+function interface_has_prefix {
+  local -r interface="$1"
+  local -r type="$2"
+
+  local mac
+  mac="$(interface_mac "$interface")"
+
+  lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/${type}-prefix" &>/dev/null || return 1
+}
+
+function interface_prefix {
+  local -r interface="$1"
+  local -r type="$2"
+  local address
+  local cidr
+  local key
+  local mac
+  local prefix_length
+
+  key="${interface^^}_${type^^}_PREFIX"
+
+  if interface_has_prefix "${interface}" "${type}"; then
+    mac="$(interface_mac "$interface")"
+
+    if [[ "${type}" == "ipv4" ]]; then
+      cidr="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/ipv4-prefix")"
+      address="$(python3 -c "import ipaddress; print(ipaddress.IPv4Network(\"${cidr}\")[0] + 1)")"
+      prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv4Network(\"${cidr}\").prefixlen)")"
+    else
+      cidr="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/ipv6-prefix")"
+      address="$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(\"${cidr}\")[0] + 1)")"
+      prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(\"${cidr}\").prefixlen)")"
+    fi
+
+    EC2_ENVIRONMENT["${key}_CIDR"]="${cidr}"
+    EC2_ENVIRONMENT["${key}_ADDRESS"]="${address}"
+    EC2_ENVIRONMENT["${key}_LENGTH"]="${prefix_length}"
+  fi
+}
+
+function interface_has_vpc_cidr_blocks {
+  local -r interface="$1"
+  local -r type="$2"
+
+  local mac
+  mac="$(interface_mac "$interface")"
+
+  lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/vpc-${type}-cidr-blocks" &>/dev/null || return 1
+}
+
+function interface_vpc_reverse_pointers {
+  local key="$1"
+  local -r type="$2"
+  local -r cidr="$3"
+  local prefix_length
+  local reverse_pointers
+
+  key="${key}_REVERSE_POINTERS"
+
+  # https://ripe64.ripe.net/presentations/218-CIDR_Naming_HowTo_IPv6.pdf
+
+  if [[ "${type}" == "ipv4" ]]; then
+    prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv4Network(\"${cidr}\").prefixlen)")"
+
+    # if N = 0, you are at an octet boundary and are done.
+    if [[ "$((prefix_length % 8))" == "0" ]]; then
+      reverse_pointers="$(python3 -c "import ipaddress; print('.'.join(str(ipaddress.IPv4Network(\"${cidr}\").network_address).split('.')[::-1][-int(${prefix_length}/8):]))")"
+      reverse_pointers="${reverse_pointers}.in-addr.arpa."
+    fi
+    # TODO: IPv6 support
+    # else
+    #   prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(\"${cidr}\").prefixlen)")"
+    #
+    #   # if N = 0, you are at an octet boundary and are done.
+    #   if [[ "$(($prefix_length%4))" == "0" ]]
+    #   then
+    #     reverse_pointers="$(python3 -c "import ipaddress; print('.'.join(str(ipaddress.IPv6Network(\"${cidr}\").network_address.exploded).split(':')[::-1][-int(${prefix_length}/4):]))")"
+    #     reverse_pointers="${reverse_pointers}.ip6.arpa"
+    #   fi
+
+    EC2_ENVIRONMENT["${key}"]="${reverse_pointers}"
+  fi
+}
+
+function interface_vpc_dns {
+  local key="$1"
+  local -r type="$2"
+  local -r cidr="$3"
+  local address
+
+  if [[ "${type}" == "ipv4" ]]; then
+    key="${key}_DNS"
+    address="$(python3 -c "import ipaddress; print(ipaddress.IPv4Network(\"${cidr}\")[0] + 2)")"
+    EC2_ENVIRONMENT["${key}"]="${address}"
+  fi
+}
+
+function interface_vpc_cidr_blocks {
+  local -r interface="$1"
+  local -r type="$2"
+  local key
+  local mac
+  local vpc_cidr_blocks
+  local vpc_cidr_blocks_array
+
+  key="${interface^^}_${type^^}_VPC"
+
+  if interface_has_vpc_cidr_blocks "${interface}" "${type}"; then
+    mac="$(interface_mac "$interface")"
+
+    vpc_cidr_blocks="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/vpc-${type}-cidr-blocks")"
+
+    readarray -t vpc_cidr_blocks_array <<<"${vpc_cidr_blocks}"
+
+    if [[ "${#vpc_cidr_blocks_array[@]}" -ge 1 ]]; then
+      EC2_ENVIRONMENT["${key}_CIDR"]="${vpc_cidr_blocks_array[0]:-false}"
+      interface_vpc_dns "${key}" "${type}" "${vpc_cidr_blocks_array[0]:-false}"
+      interface_vpc_reverse_pointers "${key}" "${type}" "${vpc_cidr_blocks_array[0]:-false}"
+
+      local index
+
+      for index in "${!vpc_cidr_blocks_array[@]}"; do
+        EC2_ENVIRONMENT["${key}_${index}_CIDR"]="${vpc_cidr_blocks_array[${index}]:-false}"
+
+        interface_vpc_dns "${key}_${index}" "${type}" "${vpc_cidr_blocks_array[${index}]:-false}"
+        interface_vpc_reverse_pointers "${key}_${index}" "${type}" "${vpc_cidr_blocks_array[${index}]:-false}"
+      done
+    fi
+  fi
+}
+
+function interface_has_local_ipv4s {
+  local -r interface="$1"
+  local -r type="$2"
+
+  local mac
+  mac="$(interface_mac "$interface")"
+
+  lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/local-ipv4s" &>/dev/null || return 1
+}
+
+function interface_has_ipv6s {
+  local -r interface="$1"
+  local -r type="$2"
+
+  local mac
+  mac="$(interface_mac "$interface")"
+
+  lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/ipv6s" &>/dev/null || return 1
+}
+
+function interface_addresses {
+  local -r interface="$1"
+  local -r type="$2"
+  local key
+  local mac
+  local addresses
+  local addresses_array=()
+
+  key="${interface^^}_${type^^}_ADDRESS"
+  mac="$(interface_mac "$interface")"
+
+  if [[ "${type}" == "ipv4" ]]; then
+    if interface_has_local_ipv4s "${interface}" "${type}"; then
+      addresses="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/local-ipv4s")"
+      readarray -t addresses_array <<<"${addresses}"
+    fi
+  else
+    if interface_has_ipv6s "${interface}" "${type}"; then
+      addresses="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/ipv6s")"
+      readarray -t addresses_array <<<"${addresses}"
+    fi
+  fi
+
+  if [[ "${#addresses_array[@]}" -ge 1 ]]; then
+    EC2_ENVIRONMENT["${key}"]="${addresses_array[0]:-false}"
+
+    local index
+
+    for index in "${!addresses_array[@]}"; do
+      EC2_ENVIRONMENT["${key}_${index}"]="${addresses_array[${index}]:-false}"
+    done
+  fi
+}
+
+function interface_has_subnet_cidr_blocks {
+  local -r interface="$1"
+  local -r type="$2"
+
+  local mac
+  mac="$(interface_mac "$interface")"
+
+  if [[ "${type}" == "ipv4" ]]; then
+    lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/subnet-ipv4-cidr-block" &>/dev/null || return 1
+  else
+    lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/subnet-ipv6-cidr-blocks" &>/dev/null || return 1
+  fi
+}
+
+function interface_cidrs {
+  local -r interface="$1"
+  local -r type="$2"
+  local key
+  local mac
+  local cidrs
+  local cidrs_array=()
+
+  key="${interface^^}_${type^^}_CIDR"
+  mac="$(interface_mac "$interface")"
+
+  if interface_has_subnet_cidr_blocks "${interface}" "${type}"; then
+    if [[ "${type}" == "ipv4" ]]; then
+      cidrs="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/subnet-ipv4-cidr-block")"
+      readarray -t cidrs_array <<<"${cidrs}"
+    else
+      cidrs="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/subnet-ipv6-cidr-blocks")"
+      readarray -t cidrs_array <<<"${cidrs}"
+    fi
+
+    if [[ "${#cidrs_array[@]}" -ge 1 ]]; then
+      EC2_ENVIRONMENT["${key}"]="${cidrs_array[0]:-false}"
+
+      local index
+
+      for index in "${!cidrs_array[@]}"; do
+        EC2_ENVIRONMENT["${key}_${index}"]="${cidrs_array[${index}]:-false}"
+      done
+    fi
+  fi
+}
+
+function get_instance_interfaces {
+  local macs
+  local macs_array
+  local device_number
+  local mac
+  local interface
+
+  macs="$(lookup_path_in_instance_metadata "network/interfaces/macs")"
+
+  readarray -t macs_array <<<"${macs}"
+
+  for mac in "${macs_array[@]}"; do
+    device_number="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac::-1}/device-number")"
+    interface="eth${device_number}"
+
+    assert_is_interface "${interface}"
+
+    echo "${interface}"
+  done
+}
+
+function update {
+  local -r types=("ipv4" "ipv6")
+  local interfaces
+  local has_systemd_networkd_wait_online="false"
+
+  if [[ -f "/lib/systemd/systemd-networkd-wait-online" ]]
+  then
+    has_systemd_networkd_wait_online="true"
+  fi
+
+  if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
+  then
+    /lib/systemd/systemd-networkd-wait-online -o routable --ipv4 -i "eth0" >&2
+  fi
+
+  readarray -t interfaces <<<"$(get_instance_interfaces)"
+
+  EC2_ENVIRONMENT["ID"]="$(get_instance_id)"
+  EC2_ENVIRONMENT["TYPE"]="$(get_instance_type)"
+  EC2_ENVIRONMENT["REGION"]="$(get_instance_region)"
+  EC2_ENVIRONMENT["AVAILABILITY_ZONE"]="$(get_instance_availability_zone)"
+
+  for interface in "${interfaces[@]}"; do
+    local size_before="${#EC2_ENVIRONMENT[@]}"
+
+    for type in "${types[@]}"; do
+      if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
+      then
+        /lib/systemd/systemd-networkd-wait-online -o routable "--${type}" -i "${interface}" >&2
+      fi
+
+      log_info "Looking up ${interface} ${type}"
+
+      interface_vpc_cidr_blocks "${interface}" "${type}"
+      interface_addresses "${interface}" "${type}"
+      interface_cidrs "${interface}" "${type}"
+      interface_prefix "${interface}" "${type}"
+    done
+
+    local size_after="${#EC2_ENVIRONMENT[@]}"
+
+    if [[ "${size_after}" == "${size_before}" ]]
+    then
+      exit 1
+    fi
+  done
+}
+
+function main {
+  local -r file="/etc/sysconfig/ec2-environment"
+
+  update
+
+  (
+    for key in "${!EC2_ENVIRONMENT[@]}"; do
+      echo "EC2_INSTANCE_${key}=\"${EC2_ENVIRONMENT[$key]:-false}\""
+    done
+  ) | sort > "${file}"
+
+  chown root:root "${file}"
+  chmod 644 "${file}"
+}
+
+main
