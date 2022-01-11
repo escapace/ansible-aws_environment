@@ -30,7 +30,7 @@
 - name: create ec2-environment service
   template: src=templates/ec2-environment.service.j2 dest=/usr/lib/systemd/system/ec2-environment.service owner=root group=root mode=0644
   notify:
-    - aws_ec2_environment daemon-reload
+    - aws_environment daemon-reload
 
 - name: enable ec2-environment on boot
   service: name=ec2-environment enabled=yes

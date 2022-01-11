@@ -1,6 +1,6 @@
 ---
-# handlers file for escapace.aws_ec2_environment
+# handlers file for escapace.aws_environment
 #
-- name: aws_ec2_environment daemon-reload
+- name: aws_environment daemon-reload
   systemd:
     daemon_reload: yes

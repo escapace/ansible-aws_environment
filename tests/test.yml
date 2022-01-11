@@ -2,4 +2,4 @@
 - hosts: localhost
   remote_user: root
   roles:
-    - escapace.aws_ec2_environment
+    - escapace.aws_environment
