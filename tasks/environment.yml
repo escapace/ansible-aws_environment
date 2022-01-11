@@ -11,12 +11,6 @@
      - python3
      - curl
 
-- name: install retry
-  dnf:
-    name: "{{ aws_ec2_environment_rpm_retry }}"
-    disable_gpg_check: yes
-    state: present
-
 - name: copy ec2-environment script
   ansible.builtin.copy:
     src: files/ec2-environment
@@ -24,6 +18,14 @@
     mode: '0755'
     owner: root
     group: root
+
+- name: create directory for ec2-environment systemd drop-ins
+  file:
+    path: /etc/systemd/system/ec2-environment.service.d
+    owner: root
+    group: root
+    state: directory
+    mode: 0755
 
 - name: create ec2-environment service
   template: src=templates/ec2-environment.service.j2 dest=/usr/lib/systemd/system/ec2-environment.service owner=root group=root mode=0644

@@ -7,6 +7,14 @@ readonly EC2_INSTANCE_DYNAMIC_DATA_URL="http://169.254.169.254/latest/dynamic"
 
 declare -A EC2_ENVIRONMENT
 
+export EXPECT_IPV4_ETH0="${EXPECT_IPV4_ETH0:-true}"
+export EXPECT_IPV6_ETH0="${EXPECT_IPV6_ETH0:-true}"
+
+expect_ipv4=()
+expect_ipv6=()
+expect_ipv4_prefix=()
+expect_ipv6_prefix=()
+
 function log {
   local -r level="$1"
   local -r message="$2"
@@ -22,6 +30,88 @@ function log_error {
 function log_info {
   local -r message="$1"
   log "INFO" "$message"
+}
+
+function get_expectations {
+  local name
+  local array_expect
+
+  local -r regex="^EXPECT_(IPV4|IPV6)_(PREFIX_([0-9a-zA-Z]*)|[0-9a-zA-Z]*)=([a-zA-Z]*)"
+
+  readarray -t array_expect < <(env | grep -E '^EXPECT_IPV[46]_')
+
+  for name in "${array_expect[@]}"
+  do
+    if [[ "${name}" =~ ${regex} ]]
+    then
+      local object=()
+      local item
+      local prefix="false"
+      local type
+      local interface
+      local value
+
+      for item in "${BASH_REMATCH[@]:1}"
+      do
+         if [[ -z "$item" ]]
+         then
+           continue
+         fi
+
+         object+=("${item}")
+      done
+
+      if [[ "${#object[@]}" == "3" ]]
+      then
+        type="${object[0],,}"
+        interface="${object[1],,}"
+        value="${object[2],,}"
+      elif [[ "${#object[@]}" == "4" ]]
+      then
+        prefix=true
+        type="${object[0],,}"
+        interface="${object[2],,}"
+        value="${object[3],,}"
+      fi
+
+      if [[ "${value}" == "true" ]]
+      then
+        if [[ "${type}" == "ipv4" ]]
+        then
+          if [[ "${prefix}" == "true" ]]
+          then
+            log_info "Expecting ${interface} ${type} prefix."
+            expect_ipv4_prefix+=("${interface}")
+          else
+            log_info "Expecting ${interface} ${type}."
+            expect_ipv4+=("${interface}")
+          fi
+        elif [[ "${type}" == "ipv6" ]]
+        then
+          if [[ "${prefix}" == "true" ]]
+          then
+            log_info "Expecting ${interface} ${type} prefix."
+            expect_ipv6_prefix+=("${interface}")
+          else
+            log_info "Expecting ${interface} ${type}."
+            expect_ipv6+=("${interface}")
+          fi
+        fi
+      fi
+    fi
+  done
+}
+
+contains () {
+  local seeking=$1; shift
+  local in=1
+  for element; do
+    if [[ $element == "$seeking" ]]; then
+      in=0
+      break
+    fi
+  done
+  return $in
 }
 
 function lookup_path_in_instance_metadata {
@@ -121,6 +211,14 @@ function interface_prefix {
     EC2_ENVIRONMENT["${key}_CIDR"]="${cidr}"
     EC2_ENVIRONMENT["${key}_ADDRESS"]="${address}"
     EC2_ENVIRONMENT["${key}_LENGTH"]="${prefix_length}"
+  else
+    if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4_prefix[@]}") ||
+       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6_prefix[@]}")
+    then
+      log_error "Failed to lookup ${type} prefix on ${interface}."
+
+      exit 1
+    fi
   fi
 }
 
@@ -212,6 +310,14 @@ function interface_vpc_cidr_blocks {
         interface_vpc_reverse_pointers "${key}_${index}" "${type}" "${vpc_cidr_blocks_array[${index}]:-false}"
       done
     fi
+  else
+    if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
+       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
+    then
+      log_error "Failed to lookup ${type} vpc cidr block(s) on ${interface}."
+
+      exit 1
+    fi
   fi
 }
 
@@ -266,6 +372,14 @@ function interface_addresses {
     for index in "${!addresses_array[@]}"; do
       EC2_ENVIRONMENT["${key}_${index}"]="${addresses_array[${index}]:-false}"
     done
+  else
+    if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
+       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
+    then
+      log_error "Failed to lookup ${type} addresses on ${interface}."
+
+      exit 1
+    fi
   fi
 }
 
@@ -312,6 +426,14 @@ function interface_cidrs {
         EC2_ENVIRONMENT["${key}_${index}"]="${cidrs_array[${index}]:-false}"
       done
     fi
+  else
+    if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
+       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
+    then
+      log_error "Failed to lookup ${type} subnet cidr block(s) on ${interface}."
+
+      exit 1
+    fi
   fi
 }
 
@@ -336,6 +458,72 @@ function get_instance_interfaces {
   done
 }
 
+function wait_online {
+  local -r interface="$1"
+  local args=("-o" "routable" "-i" "${interface}")
+  local value
+
+  for value in "${expect_ipv4[@]}"
+  do
+    if [[ "${value}" == "${interface}" ]]
+    then
+      args+=("--ipv4")
+    fi
+  done
+
+  for value in "${expect_ipv6[@]}"
+  do
+    if [[ "${value}" == "${interface}" ]]
+    then
+      args+=("--ipv6")
+    fi
+  done
+
+  /lib/systemd/systemd-networkd-wait-online "${args[@]}" >&2
+}
+
+function assert_interfaces_known {
+  local interface
+  local fail=false
+
+  for interface in "${expect_ipv4[@]}"; do
+    if ! contains "${interface}" "${@}"
+    then
+      fail=true
+      log_error "Unknown interface ${interface}."
+    fi
+  done
+
+  for interface in "${expect_ipv6[@]}"; do
+    if ! contains "${interface}" "${@}"
+    then
+      fail=true
+      log_error "Unknown interface ${interface}."
+    fi
+  done
+
+  for interface in "${expect_ipv4_prefix[@]}"; do
+    if ! contains "${interface}" "${@}"
+    then
+      fail=true
+      log_error "Unknown interface ${interface}."
+    fi
+  done
+
+  for interface in "${expect_ipv6_prefix[@]}"; do
+    if ! contains "${interface}" "${@}"
+    then
+      fail=true
+      log_error "Unknown interface ${interface}."
+    fi
+  done
+
+  if [[ "${fail}" == "true" ]]
+  then
+    exit 1
+  fi
+}
+
 function update {
   local -r types=("ipv4" "ipv6")
   local interfaces
@@ -348,10 +536,12 @@ function update {
 
   if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
   then
-    /lib/systemd/systemd-networkd-wait-online -o routable --ipv4 -i "eth0" >&2
+    wait_online "eth0"
   fi
 
   readarray -t interfaces <<<"$(get_instance_interfaces)"
+
+  assert_interfaces_known "${interfaces[@]}"
 
   EC2_ENVIRONMENT["ID"]="$(get_instance_id)"
   EC2_ENVIRONMENT["TYPE"]="$(get_instance_type)"
@@ -359,34 +549,24 @@ function update {
   EC2_ENVIRONMENT["AVAILABILITY_ZONE"]="$(get_instance_availability_zone)"
 
   for interface in "${interfaces[@]}"; do
-    local size_before="${#EC2_ENVIRONMENT[@]}"
+    if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
+    then
+      wait_online "${interface}"
+    fi
 
     for type in "${types[@]}"; do
-      if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
-      then
-        /lib/systemd/systemd-networkd-wait-online -o routable "--${type}" -i "${interface}" >&2
-      fi
-
-      log_info "Looking up ${interface} ${type}"
-
       interface_vpc_cidr_blocks "${interface}" "${type}"
       interface_addresses "${interface}" "${type}"
       interface_cidrs "${interface}" "${type}"
       interface_prefix "${interface}" "${type}"
     done
-
-    local size_after="${#EC2_ENVIRONMENT[@]}"
-
-    if [[ "${size_after}" == "${size_before}" ]]
-    then
-      exit 1
-    fi
   done
 }
 
 function main {
   local -r file="/etc/sysconfig/ec2-environment"
 
+  get_expectations
   update
 
   (
