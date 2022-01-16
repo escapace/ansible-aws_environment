@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly SCRIPT_NAME="$(basename "$0")"
-readonly EC2_INSTANCE_METADATA_URL="http://169.254.169.254/latest/meta-data"
-readonly EC2_INSTANCE_DYNAMIC_DATA_URL="http://169.254.169.254/latest/dynamic"
+SCRIPT_NAME=
+SCRIPT_NAME="$(basename "$0")"
+EC2_INSTANCE_METADATA_TOKEN=
+EC2_INSTANCE_METADATA_TOKEN="$(curl -fsS -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 600" "http://169.254.169.254/latest/api/token")"
 
 declare -A EC2_ENVIRONMENT
+
+readonly EC2_INSTANCE_METADATA_URL="http://169.254.169.254/latest/meta-data"
+readonly EC2_INSTANCE_DYNAMIC_DATA_URL="http://169.254.169.254/latest/dynamic"
 
 export EXPECT_IPV4_ETH0="${EXPECT_IPV4_ETH0:-true}"
 export EXPECT_IPV6_ETH0="${EXPECT_IPV6_ETH0:-true}"
@@ -116,12 +120,16 @@ contains () {
 
 function lookup_path_in_instance_metadata {
   local -r path="$1"
-  curl -f --silent --show-error --location "$EC2_INSTANCE_METADATA_URL/$path/"
+
+  curl "$EC2_INSTANCE_METADATA_URL/$path/" -H "X-aws-ec2-metadata-token: $EC2_INSTANCE_METADATA_TOKEN" \
+    --silent --location --fail --show-error
 }
 
 function lookup_path_in_instance_dynamic_data {
   local -r path="$1"
-  curl -f --silent --location "$EC2_INSTANCE_DYNAMIC_DATA_URL/$path/"
+
+  curl "$EC2_INSTANCE_DYNAMIC_DATA_URL/$path/" -H "X-aws-ec2-metadata-token: $EC2_INSTANCE_METADATA_TOKEN" \
+    --silent --location --fail --show-error
 }
 
 function get_instance_id {
