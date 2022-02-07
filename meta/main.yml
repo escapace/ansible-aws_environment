@@ -9,11 +9,11 @@ galaxy_info:
   platforms:
   - name: EL
     versions:
-    - 8
+    - 9
 
   galaxy_tags:
   - escapace
   - aws_environment
 
 dependencies:
-  - { role: escapace.retry }
+  - { role: escapace.escapace_releases }

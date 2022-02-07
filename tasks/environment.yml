@@ -10,6 +10,7 @@
      - jq
      - python3
      - curl
+     - retry
 
 - name: copy ec2-environment script
   ansible.builtin.copy:
