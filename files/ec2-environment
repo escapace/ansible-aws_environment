@@ -445,6 +445,16 @@ function interface_cidrs {
   fi
 }
 
+function interface_vpc_id {
+  local -r interface="$1"
+  local -r key="${interface^^}_VPC_ID"
+
+  mac="$(interface_mac "$interface")"
+  vpc_id="$(lookup_path_in_instance_metadata "network/interfaces/macs/${mac}/vpc-id")"
+
+  EC2_ENVIRONMENT["${key}"]="${vpc_id}"
+}
+
 function get_instance_interfaces {
   local macs
   local macs_array
@@ -561,6 +571,8 @@ function update {
     then
       wait_online "${interface}"
     fi
+
+    interface_vpc_id "${interface}"
 
     for type in "${types[@]}"; do
       interface_vpc_cidr_blocks "${interface}" "${type}"
