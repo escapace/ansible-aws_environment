@@ -44,10 +44,8 @@ function get_expectations {
 
   readarray -t array_expect < <(env | grep -E '^EXPECT_IPV[46]_')
 
-  for name in "${array_expect[@]}"
-  do
-    if [[ "${name}" =~ ${regex} ]]
-    then
+  for name in "${array_expect[@]}"; do
+    if [[ "${name}" =~ ${regex} ]]; then
       local object=()
       local item
       local prefix="false"
@@ -55,45 +53,36 @@ function get_expectations {
       local interface
       local value
 
-      for item in "${BASH_REMATCH[@]:1}"
-      do
-         if [[ -z "$item" ]]
-         then
-           continue
-         fi
+      for item in "${BASH_REMATCH[@]:1}"; do
+        if [[ -z "$item" ]]; then
+          continue
+        fi
 
-         object+=("${item}")
+        object+=("${item}")
       done
 
-      if [[ "${#object[@]}" == "3" ]]
-      then
+      if [[ "${#object[@]}" == "3" ]]; then
         type="${object[0],,}"
         interface="${object[1],,}"
         value="${object[2],,}"
-      elif [[ "${#object[@]}" == "4" ]]
-      then
+      elif [[ "${#object[@]}" == "4" ]]; then
         prefix=true
         type="${object[0],,}"
         interface="${object[2],,}"
         value="${object[3],,}"
       fi
 
-      if [[ "${value}" == "true" ]]
-      then
-        if [[ "${type}" == "ipv4" ]]
-        then
-          if [[ "${prefix}" == "true" ]]
-          then
+      if [[ "${value}" == "true" ]]; then
+        if [[ "${type}" == "ipv4" ]]; then
+          if [[ "${prefix}" == "true" ]]; then
             log_info "Expecting ${interface} ${type} prefix."
             expect_ipv4_prefix+=("${interface}")
           else
             log_info "Expecting ${interface} ${type}."
             expect_ipv4+=("${interface}")
           fi
-        elif [[ "${type}" == "ipv6" ]]
-        then
-          if [[ "${prefix}" == "true" ]]
-          then
+        elif [[ "${type}" == "ipv6" ]]; then
+          if [[ "${prefix}" == "true" ]]; then
             log_info "Expecting ${interface} ${type} prefix."
             expect_ipv6_prefix+=("${interface}")
           else
@@ -106,8 +95,9 @@ function get_expectations {
   done
 }
 
-contains () {
-  local seeking=$1; shift
+contains() {
+  local seeking=$1
+  shift
   local in=1
   for element; do
     if [[ $element == "$seeking" ]]; then
@@ -221,8 +211,7 @@ function interface_prefix {
     EC2_ENVIRONMENT["${key}_LENGTH"]="${prefix_length}"
   else
     if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4_prefix[@]}") ||
-       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6_prefix[@]}")
-    then
+      ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6_prefix[@]}"); then
       log_error "Failed to lookup ${type} prefix on ${interface}."
 
       exit 1
@@ -320,8 +309,7 @@ function interface_vpc_cidr_blocks {
     fi
   else
     if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
-       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
-    then
+      ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}"); then
       log_error "Failed to lookup ${type} vpc cidr block(s) on ${interface}."
 
       exit 1
@@ -382,8 +370,7 @@ function interface_addresses {
     done
   else
     if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
-       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
-    then
+      ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}"); then
       log_error "Failed to lookup ${type} addresses on ${interface}."
 
       exit 1
@@ -436,8 +423,7 @@ function interface_cidrs {
     fi
   else
     if ([[ "${type}" == "ipv4" ]] && contains "${interface}" "${expect_ipv4[@]}") ||
-       ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}")
-    then
+      ([[ "${type}" == "ipv6" ]] && contains "${interface}" "${expect_ipv6[@]}"); then
       log_error "Failed to lookup ${type} subnet cidr block(s) on ${interface}."
 
       exit 1
@@ -481,18 +467,14 @@ function wait_online {
   local args=("-o" "routable" "-i" "${interface}")
   local value
 
-  for value in "${expect_ipv4[@]}"
-  do
-    if [[ "${value}" == "${interface}" ]]
-    then
+  for value in "${expect_ipv4[@]}"; do
+    if [[ "${value}" == "${interface}" ]]; then
       args+=("--ipv4")
     fi
   done
 
-  for value in "${expect_ipv6[@]}"
-  do
-    if [[ "${value}" == "${interface}" ]]
-    then
+  for value in "${expect_ipv6[@]}"; do
+    if [[ "${value}" == "${interface}" ]]; then
       args+=("--ipv6")
     fi
   done
@@ -505,39 +487,34 @@ function assert_interfaces_known {
   local fail=false
 
   for interface in "${expect_ipv4[@]}"; do
-    if ! contains "${interface}" "${@}"
-    then
+    if ! contains "${interface}" "${@}"; then
       fail=true
       log_error "Unknown interface ${interface}."
     fi
   done
 
   for interface in "${expect_ipv6[@]}"; do
-    if ! contains "${interface}" "${@}"
-    then
+    if ! contains "${interface}" "${@}"; then
       fail=true
       log_error "Unknown interface ${interface}."
     fi
   done
 
   for interface in "${expect_ipv4_prefix[@]}"; do
-    if ! contains "${interface}" "${@}"
-    then
+    if ! contains "${interface}" "${@}"; then
       fail=true
       log_error "Unknown interface ${interface}."
     fi
   done
 
   for interface in "${expect_ipv6_prefix[@]}"; do
-    if ! contains "${interface}" "${@}"
-    then
+    if ! contains "${interface}" "${@}"; then
       fail=true
       log_error "Unknown interface ${interface}."
     fi
   done
 
-  if [[ "${fail}" == "true" ]]
-  then
+  if [[ "${fail}" == "true" ]]; then
     exit 1
   fi
 }
@@ -546,14 +523,14 @@ function update {
   local -r types=("ipv4" "ipv6")
   local interfaces
   local has_systemd_networkd_wait_online="false"
+  local instance_id
+  local describe_instance
 
-  if [[ -f "/lib/systemd/systemd-networkd-wait-online" ]]
-  then
+  if [[ -f "/lib/systemd/systemd-networkd-wait-online" ]]; then
     has_systemd_networkd_wait_online="true"
   fi
 
-  if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
-  then
+  if [[ "${has_systemd_networkd_wait_online}" == "true" ]]; then
     wait_online "eth0"
   fi
 
@@ -561,14 +538,19 @@ function update {
 
   assert_interfaces_known "${interfaces[@]}"
 
-  EC2_ENVIRONMENT["ID"]="$(get_instance_id)"
+  instance_id="$(get_instance_id)"
+
+  EC2_ENVIRONMENT["ID"]="${instance_id}"
   EC2_ENVIRONMENT["TYPE"]="$(get_instance_type)"
   EC2_ENVIRONMENT["REGION"]="$(get_instance_region)"
   EC2_ENVIRONMENT["AVAILABILITY_ZONE"]="$(get_instance_availability_zone)"
 
+  describe_instance="$(aws ec2 describe-instances --output json --instance-id "${instance_id}" | jq -r ".Reservations[0].Instances[0]")"
+
+  EC2_ENVIRONMENT["LIFECYCLE"]="$(echo "${describe_instance}" | jq -r '.InstanceLifecycle | .required // "scheduled"')"
+
   for interface in "${interfaces[@]}"; do
-    if [[ "${has_systemd_networkd_wait_online}" == "true" ]]
-    then
+    if [[ "${has_systemd_networkd_wait_online}" == "true" ]]; then
       wait_online "${interface}"
     fi
 
@@ -593,7 +575,7 @@ function main {
     for key in "${!EC2_ENVIRONMENT[@]}"; do
       echo "EC2_INSTANCE_${key}=\"${EC2_ENVIRONMENT[$key]:-false}\""
     done
-  ) | sort > "${file}"
+  ) | sort >"${file}"
 
   chown root:root "${file}"
   chmod 644 "${file}"
