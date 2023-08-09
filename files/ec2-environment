@@ -523,8 +523,6 @@ function update {
   local -r types=("ipv4" "ipv6")
   local interfaces
   local has_systemd_networkd_wait_online="false"
-  local instance_id
-  local region
 
   if [[ -f "/lib/systemd/systemd-networkd-wait-online" ]]; then
     has_systemd_networkd_wait_online="true"
@@ -538,12 +536,9 @@ function update {
 
   assert_interfaces_known "${interfaces[@]}"
 
-  instance_id="$(get_instance_id)"
-  region="$(get_instance_region)"
-
-  EC2_ENVIRONMENT["ID"]="${instance_id}"
+  EC2_ENVIRONMENT["ID"]="$(get_instance_id)"
   EC2_ENVIRONMENT["TYPE"]="$(get_instance_type)"
-  EC2_ENVIRONMENT["REGION"]="${region}"
+  EC2_ENVIRONMENT["REGION"]="$(get_instance_region)"
   EC2_ENVIRONMENT["AVAILABILITY_ZONE"]="$(get_instance_availability_zone)"
 
   for interface in "${interfaces[@]}"; do
@@ -560,12 +555,6 @@ function update {
       interface_prefix "${interface}" "${type}"
     done
   done
-
-  local describe_instance
-
-  describe_instance="$(aws ec2 describe-instances --output json --region "${region}" --instance-id "${instance_id}" | jq -r ".Reservations[0].Instances[0]")"
-
-  EC2_ENVIRONMENT["LIFECYCLE"]="$(echo "${describe_instance}" | jq -r '.InstanceLifecycle | .required // "scheduled"')"
 }
 
 function main {
