@@ -14,7 +14,7 @@ galaxy_info:
 
   galaxy_tags:
     - escapace
-    - aws_environment
+    - aws
 
 dependencies:
   - { role: escapace.aws_cli }

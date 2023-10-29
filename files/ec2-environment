@@ -234,33 +234,8 @@ function interface_vpc_reverse_pointers {
   local -r type="$2"
   local -r cidr="$3"
   local prefix_length
-  local reverse_pointers
 
-  key="${key}_REVERSE_POINTERS"
-
-  # https://ripe64.ripe.net/presentations/218-CIDR_Naming_HowTo_IPv6.pdf
-
-  if [[ "${type}" == "ipv4" ]]; then
-    prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv4Network(\"${cidr}\").prefixlen)")"
-
-    # if N = 0, you are at an octet boundary and are done.
-    if [[ "$((prefix_length % 8))" == "0" ]]; then
-      reverse_pointers="$(python3 -c "import ipaddress; print('.'.join(str(ipaddress.IPv4Network(\"${cidr}\").network_address).split('.')[::-1][-int(${prefix_length}/8):]))")"
-      reverse_pointers="${reverse_pointers}.in-addr.arpa."
-    fi
-    # TODO: IPv6 support
-    # else
-    #   prefix_length="$(python3 -c "import ipaddress; print(ipaddress.IPv6Network(\"${cidr}\").prefixlen)")"
-    #
-    #   # if N = 0, you are at an octet boundary and are done.
-    #   if [[ "$(($prefix_length%4))" == "0" ]]
-    #   then
-    #     reverse_pointers="$(python3 -c "import ipaddress; print('.'.join(str(ipaddress.IPv6Network(\"${cidr}\").network_address.exploded).split(':')[::-1][-int(${prefix_length}/4):]))")"
-    #     reverse_pointers="${reverse_pointers}.ip6.arpa"
-    #   fi
-
-    EC2_ENVIRONMENT["${key}"]="${reverse_pointers}"
-  fi
+  EC2_ENVIRONMENT["${key}_REVERSE_POINTERS"]="$(ipcalc --"${type}" --no-decorate --reverse-dns "${cidr}")"
 }
 
 function interface_vpc_dns {

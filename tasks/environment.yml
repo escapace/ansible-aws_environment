@@ -1,27 +1,26 @@
 ---
-
 - name: install dependencies
-  yum:
+  ansible.builtin.dnf:
     name: "{{ packages }}"
     state: present
-    update_cache: yes
   vars:
     packages:
-     - jq
-     - python3
-     - curl
-     - retry
+      - jq
+      - python3
+      - curl
+      - retry
+      - ipcalc
 
 - name: copy ec2-environment script
   ansible.builtin.copy:
     src: files/ec2-environment
     dest: /usr/bin/ec2-environment
-    mode: '0755'
+    mode: 0755
     owner: root
     group: root
 
 - name: create directory for ec2-environment systemd drop-ins
-  file:
+  ansible.builtin.file:
     path: /etc/systemd/system/ec2-environment.service.d
     owner: root
     group: root
@@ -29,9 +28,16 @@
     mode: 0755
 
 - name: create ec2-environment service
-  template: src=templates/ec2-environment.service.j2 dest=/usr/lib/systemd/system/ec2-environment.service owner=root group=root mode=0644
+  ansible.builtin.template:
+    src: templates/ec2-environment.service.j2
+    dest: /usr/lib/systemd/system/ec2-environment.service
+    owner: root
+    group: root
+    mode: 0644
   notify:
     - aws_environment daemon-reload
 
 - name: enable ec2-environment on boot
-  service: name=ec2-environment enabled=yes
+  ansible.builtin.service:
+    name: ec2-environment
+    enabled: true

@@ -2,5 +2,5 @@
 # handlers file for escapace.aws_environment
 #
 - name: aws_environment daemon-reload
-  systemd:
-    daemon_reload: yes
+  ansible.builtin.systemd:
+    daemon_reload: true
