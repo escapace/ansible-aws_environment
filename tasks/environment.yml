@@ -15,7 +15,7 @@
   ansible.builtin.copy:
     src: files/ec2-environment
     dest: /usr/bin/ec2-environment
-    mode: 0755
+    mode: "0755"
     owner: root
     group: root
 
@@ -25,7 +25,7 @@
     owner: root
     group: root
     state: directory
-    mode: 0755
+    mode: "0755"
 
 - name: create ec2-environment service
   ansible.builtin.template:
@@ -33,7 +33,7 @@
     dest: /usr/lib/systemd/system/ec2-environment.service
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
   notify:
     - aws_environment daemon-reload
 
