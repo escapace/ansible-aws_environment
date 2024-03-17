@@ -1,5 +1,4 @@
 ---
-
 galaxy_info:
   role_name: aws_environment
   description: aws_environment role
